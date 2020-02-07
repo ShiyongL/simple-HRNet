@@ -28,7 +28,6 @@ def letterbox(img, new_shape=416, color=(127.5, 127.5, 127.5), mode='auto'):
     else:
         ratio = max(new_shape) / max(shape)  # ratio  = new / old
     new_unpad = (int(round(shape[1] * ratio)), int(round(shape[0] * ratio)))
-
     if mode is 'auto':  # minimum rectangle
         dw = np.mod(new_shape - new_unpad[0], 32) / 2  # width padding
         dh = np.mod(new_shape - new_unpad[1], 32) / 2  # height padding
@@ -42,6 +41,7 @@ def letterbox(img, new_shape=416, color=(127.5, 127.5, 127.5), mode='auto'):
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
     img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)  # resized, no border
     img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # padded square
+    # cv2.imwrite('/home/shiyong/Cortica/Research/Juno/debug_image_out/test.png', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     return img, ratio, dw, dh
 
 
@@ -81,7 +81,7 @@ class YOLOv3:
                  model_def="config/yolov3.cfg",
                  class_path="data/coco.names",
                  weights_path="weights/yolov3.weights",
-                 conf_thres=0.2,
+                 conf_thres=0.05,
                  nms_thres=0.4,
                  img_size=416,
                  classes=None,
@@ -121,7 +121,7 @@ class YOLOv3:
         return self.predict(np.expand_dims(image.copy(), axis=0), color_mode=color_mode)[0]
 
     def predict(self, images, color_mode='BGR'):
-        images_rescaled = prepare_data(images.copy(), color_mode=color_mode)
+        images_rescaled = prepare_data(images.copy(), color_mode=color_mode, new_shape=self.img_size)
         with torch.no_grad():
             images_rescaled = images_rescaled.to(self.device)
 
