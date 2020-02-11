@@ -10,36 +10,36 @@ def joints_dict():
     joints = {
         "coco": {
             "keypoints": {
-                # 0: "nose",
-                # 1: "left_eye",
-                # 2: "right_eye",
-                # 3: "left_ear",
-                # 4: "right_ear",
-                # 5: "left_shoulder",
-                # 6: "right_shoulder",
+                0: "nose",
+                1: "left_eye",
+                2: "right_eye",
+                3: "left_ear",
+                4: "right_ear",
+                5: "left_shoulder",
+                6: "right_shoulder",
                 7: "left_elbow",
                 8: "right_elbow",
                 9: "left_wrist",
                 10: "right_wrist",
-                # 11: "left_hip",
-                # 12: "right_hip",
-                # 13: "left_knee",
-                # 14: "right_knee",
-                # 15: "left_ankle",
-                # 16: "right_ankle"
+                11: "left_hip",
+                12: "right_hip",
+                13: "left_knee",
+                14: "right_knee",
+                15: "left_ankle",
+                16: "right_ankle"
             },
-            # "skeleton": [
-            #     # # [16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12], [7, 13], [6, 7], [6, 8],
-            #     # # [7, 9], [8, 10], [9, 11], [2, 3], [1, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]
-            #     # [15, 13], [13, 11], [16, 14], [14, 12], [11, 12], [5, 11], [6, 12], [5, 6], [5, 7],
-            #     # [6, 8], [7, 9], [8, 10], [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6]
-            #     [15, 13], [13, 11], [16, 14], [14, 12], [11, 12], [5, 11], [6, 12], [5, 6], [5, 7],
-            #     [6, 8], [7, 9], [8, 10], [1, 2], [0, 1], [0, 2], [1, 3], [2, 4],  # [3, 5], [4, 6]
-            #     [0, 5], [0, 6]
-            # ]
             "skeleton": [
-                [7, 9], [8, 10]
+                # # [16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12], [7, 13], [6, 7], [6, 8],
+                # # [7, 9], [8, 10], [9, 11], [2, 3], [1, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]
+                # [15, 13], [13, 11], [16, 14], [14, 12], [11, 12], [5, 11], [6, 12], [5, 6], [5, 7],
+                # [6, 8], [7, 9], [8, 10], [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6]
+                [15, 13], [13, 11], [16, 14], [14, 12], [11, 12], [5, 11], [6, 12], [5, 6], [5, 7],
+                [6, 8], [7, 9], [8, 10], [1, 2], [0, 1], [0, 2], [1, 3], [2, 4],  # [3, 5], [4, 6]
+                [0, 5], [0, 6]
             ]
+            # "skeleton": [
+            #     [7, 9], [8, 10]
+            #]
         },
         "mpii": {
             "keypoints": {
@@ -102,7 +102,7 @@ def draw_points(image, points, color_palette='tab20', palette_samples=16):
     # circle_size = max(2, int(np.sqrt(np.max(np.max(points, axis=0) - np.min(points, axis=0)) // 16)))
 
     for i, pt in enumerate(points):
-        if pt[2] > 0.5:
+        if pt[2] > 0.0:
             image = cv2.circle(image, (int(pt[1]), int(pt[0])), circle_size, tuple(colors[i % len(colors)]), -1)
 
     return image
@@ -142,7 +142,7 @@ def draw_skeleton(image, points, skeleton, color_palette='Set2', palette_samples
 
     for i, joint in enumerate(skeleton):
         pt1, pt2 = points[joint]
-        if pt1[2] > 0.5 and pt2[2] > 0.5:
+        if pt1[2] > 0.0 and pt2[2] > 0.0:
             image = cv2.line(
                 image, (int(pt1[1]), int(pt1[0])), (int(pt2[1]), int(pt2[0])),
                 tuple(colors[person_index % len(colors)]), 2
@@ -179,12 +179,13 @@ def draw_points_and_skeleton(image, points, skeleton, points_color_palette='tab2
         A new image with overlaid joints
 
     """
-    # image = draw_skeleton(image, points, skeleton, color_palette=skeleton_color_palette, palette_samples=skeleton_palette_samples, person_index=person_index)
-    pnts = [9, 10]
+    image = draw_skeleton(image, points, skeleton, color_palette=skeleton_color_palette, palette_samples=skeleton_palette_samples, person_index=person_index)
+    # #pnts = [9, 10]
+    # pnts=[]
     # for i, joint in enumerate(skeleton):
     #     pnts.append(joint[0])
     #     pnts.append(joint[1])
-    points = points[pnts, :]
+    # points = points[pnts, :]
     image = draw_points(image, points, color_palette=points_color_palette, palette_samples=points_palette_samples)
     return image
 

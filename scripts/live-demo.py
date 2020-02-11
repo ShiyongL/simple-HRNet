@@ -31,6 +31,36 @@ def dfs_searcher(tree_root_path, extensions=[".mp4"]):
     return path_list
 
 
+def filter_boxes_pts(boxes, pts, img_height, min_height = 0.1, max_height = 0.8):
+    filter1 = np.logical_and((boxes[:, 2] - boxes[:, 0]) > img_height * min_height,
+                            (boxes[:, 2] - boxes[:, 0]) < img_height * max_height)
+    filter2 = np.sum(pts[:, :, 2], axis=1) > 5
+    filter_all = filter1 & filter2
+    boxes = boxes[filter_all]
+    pts = pts[filter_all]
+    cnt = len(pts)
+    scores = np.sum(pts[:, :, 2], axis=1)
+    idx = np.argsort(scores)[::-1]
+    pts = pts[idx]
+    boxes = boxes[idx]
+    merged_index = set()
+    for i in range(cnt):
+        if i in merged_index:
+            continue
+        pnt1 = pts[i][:, :2]
+        for j in range(i+1, cnt):
+            if j in merged_index:
+                continue
+            pnt2 = pts[j][:, :2]
+            diff = np.abs(pnt1 - pnt2)
+            diff = np.sum(diff, axis=1)
+            cnt = np.sum(diff < 20)
+            if cnt >= 4:
+                merged_index.add(j)
+                print('found!')
+
+    return boxes, pts
+
 def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set, image_resolution, single_person,
          disable_tracking, max_batch_size, disable_vidgear, save_video, video_format,
          video_framerate, device):
@@ -48,7 +78,6 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
     image_resolution = ast.literal_eval(image_resolution)
     has_display = 'DISPLAY' in os.environ.keys() or sys.platform == 'win32'
     video_writer = None
-    save_video = False
     model = SimpleHRNet(
         hrnet_c,
         hrnet_j,
@@ -60,12 +89,16 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
         device=device
     )
 
-    videos = dfs_searcher('/home/shiyong/Cortica/Research/Juno/Videos/normal/Lifting')
+    videos = dfs_searcher('/home/shiyong/Cortica/Research/Juno/Videos')
     out_names = ["_".join(fn.split(os.path.sep)[1:]) for fn in videos]
+    print(len(out_names))
     has_display = False
-    out_video_folder = '/home/shiyong/Cortica/Research/Juno/Videos/all_out'
+    save_video = False
+    video_height = 1440
+    out_video_folder = '/home/shiyong/Cortica/Research/Juno/Videos/all_out_no_pose_resize_800'
     os.makedirs(out_video_folder, exist_ok=True)
-    for filename, out_name in zip(videos, out_names):
+    for idx, (filename, out_name) in enumerate(zip(videos, out_names)):
+        print(idx)
         data_name = os.path.splitext(os.path.basename(out_name))[0] + '.pkl'
         out_data = []
         if filename is not None:
@@ -104,6 +137,7 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
 
             if not disable_tracking:
                 boxes, pts = pts
+                #boxes, pts = filter_boxes_pts(boxes, pts, video_height)
 
             if not disable_tracking:
                 if len(pts) > 0:
@@ -113,7 +147,7 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
                     else:
                         boxes, pts, person_ids = find_person_id_associations(
                             boxes=boxes, pts=pts, prev_boxes=prev_boxes, prev_pts=prev_pts, prev_person_ids=prev_person_ids,
-                            next_person_id=next_person_id, pose_alpha=0.2, similarity_threshold=0.4, smoothing_alpha=0.1,
+                            next_person_id=next_person_id, pose_alpha=0.0, similarity_threshold=0.4, smoothing_alpha=0.1,
                         )
                         next_person_id = max(next_person_id, np.max(person_ids) + 1)
                 else:
@@ -127,16 +161,17 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
                 person_ids = np.arange(len(pts), dtype=np.int32)
 
             out_data.append((pts, person_ids, boxes))
-            # for box in boxes:
-            #     x1, y1, x2, y2 = box
-            #     frame = cv2.line(frame, (x1, y1), (x1, y2), color=(255, 0, 0), thickness=2)
-            #     frame = cv2.line(frame, (x1, y2), (x2, y2), color=(255, 0, 0), thickness=2)
-            #     frame = cv2.line(frame, (x2, y2), (x2, y1), color=(255, 0, 0), thickness=2)
-            #     frame = cv2.line(frame, (x2, y1), (x1, y1), color=(255, 0, 0), thickness=2)
-            # for i, (pt, pid) in enumerate(zip(pts, person_ids)):
-            #     frame = draw_points_and_skeleton(frame, pt, joints_dict()[hrnet_joints_set]['skeleton'], person_index=pid,
-            #                                      points_color_palette='gist_rainbow', skeleton_color_palette='jet',
-            #                                      points_palette_samples=10)
+            if save_video:
+                for box in boxes:
+                    x1, y1, x2, y2 = box
+                    frame = cv2.line(frame, (x1, y1), (x1, y2), color=(255, 0, 0), thickness=2)
+                    frame = cv2.line(frame, (x1, y2), (x2, y2), color=(255, 0, 0), thickness=2)
+                    frame = cv2.line(frame, (x2, y2), (x2, y1), color=(255, 0, 0), thickness=2)
+                    frame = cv2.line(frame, (x2, y1), (x1, y1), color=(255, 0, 0), thickness=2)
+                for i, (pt, pid) in enumerate(zip(pts, person_ids)):
+                    frame = draw_points_and_skeleton(frame, pt, joints_dict()[hrnet_joints_set]['skeleton'], person_index=pid,
+                                                     points_color_palette='gist_rainbow', skeleton_color_palette='jet',
+                                                     points_palette_samples=10)
 
             fps = 1. / (time.time() - t)
             print('\rframerate: %f fps' % fps, end='')

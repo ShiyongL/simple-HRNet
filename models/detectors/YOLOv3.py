@@ -83,7 +83,7 @@ class YOLOv3:
                  weights_path="weights/yolov3.weights",
                  conf_thres=0.05,
                  nms_thres=0.4,
-                 img_size=416,
+                 img_size=800,
                  classes=None,
                  max_batch_size=16,
                  device=torch.device('cpu')):
