@@ -81,7 +81,7 @@ class YOLOv3:
                  model_def="config/yolov3.cfg",
                  class_path="data/coco.names",
                  weights_path="weights/yolov3.weights",
-                 conf_thres=0.05,
+                 conf_thres=0.1,
                  nms_thres=0.4,
                  img_size=800,
                  classes=None,

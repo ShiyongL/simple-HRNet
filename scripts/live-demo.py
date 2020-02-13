@@ -13,6 +13,7 @@ from SimpleHRNet import SimpleHRNet
 from misc.visualization import draw_points, draw_skeleton, draw_points_and_skeleton, joints_dict, check_video_rotation
 from misc.utils import find_person_id_associations
 import pickle
+from collections import deque, defaultdict
 
 
 def dfs_searcher(tree_root_path, extensions=[".mp4"]):
@@ -31,9 +32,9 @@ def dfs_searcher(tree_root_path, extensions=[".mp4"]):
     return path_list
 
 
-def filter_boxes_pts(boxes, pts, img_height, min_height = 0.1, max_height = 0.8):
-    filter1 = np.logical_and((boxes[:, 2] - boxes[:, 0]) > img_height * min_height,
-                            (boxes[:, 2] - boxes[:, 0]) < img_height * max_height)
+def filter_boxes_pts(frame_id, boxes, pts, img_height, min_height = 0.1, max_height = 0.8):
+    filter1 = np.logical_and((boxes[:, 3] - boxes[:, 1]) > img_height * min_height,
+                            (boxes[:, 3] - boxes[:, 1]) < img_height * max_height)
     filter2 = np.sum(pts[:, :, 2], axis=1) > 5
     filter_all = filter1 & filter2
     boxes = boxes[filter_all]
@@ -43,23 +44,102 @@ def filter_boxes_pts(boxes, pts, img_height, min_height = 0.1, max_height = 0.8)
     idx = np.argsort(scores)[::-1]
     pts = pts[idx]
     boxes = boxes[idx]
-    merged_index = set()
+    removed_index = []
     for i in range(cnt):
-        if i in merged_index:
+        if i in removed_index:
             continue
         pnt1 = pts[i][:, :2]
         for j in range(i+1, cnt):
-            if j in merged_index:
+            if j in removed_index:
                 continue
             pnt2 = pts[j][:, :2]
             diff = np.abs(pnt1 - pnt2)
             diff = np.sum(diff, axis=1)
-            cnt = np.sum(diff < 20)
-            if cnt >= 4:
-                merged_index.add(j)
-                print('found!')
-
+            overlapping_kp_num = np.sum(diff < 20)
+            if overlapping_kp_num >= 4:
+                removed_index.append(j)
+                # print('found! at frame {}'.format(frame_id))
+    kept_ids = [i for i in range(cnt) if i not in removed_index]
+    boxes = boxes[kept_ids]
+    pts = pts[kept_ids]
     return boxes, pts
+
+def detect_adults(boxes, pts, adult_height_ratio = 0.75):
+    skeleton = [[15, 13], [13, 11], [16, 14], [14, 12], [5, 7],
+                [6, 8], [7, 9], [8, 10], [5, 11], [6, 12]]
+    adults_len = []
+    height_list = []
+    for pt in pts:
+        joints_len = []
+        for joint in skeleton:
+            pt1, pt2 = pt[joint]
+            joints_len.append((abs(pt1[0] - pt2[0]) + abs(pt1[1] - pt2[1])) / 2.0)
+        avg_len = np.mean(np.array(joints_len))
+        adults_len.append(avg_len)
+        ys = pt[:, 0]
+        height_list.append(max(ys) - min(ys))
+    adult_arr = np.array(adults_len)
+    height_arr = np.array(height_list)
+    height_arr /= 16.0 #avg to each joint
+    adult_arr += height_arr
+    adult_arr = adult_arr > max(adult_arr) * adult_height_ratio
+    # if adults is not None and interploated is not None:
+    #     filter = interploated == 1
+    #     adult_arr[filter] = adults[filter]
+    return boxes, pts, adult_arr
+
+
+def interpolate_missing_detection(prev_person_dict, person_ids, boxes, pts, max_len = 5, avg_prev_frames = False):
+    for id, box, pt in zip(person_ids, boxes, pts):
+        if id not in prev_person_dict:
+            prev_person_dict[id] = deque(maxlen=max_len)
+        adult = 0
+        if len(prev_person_dict[id]) > 0:
+            adult = prev_person_dict[id][-1][2]
+        prev_person_dict[id].append((box, pt, adult, 1))
+
+    interploated_arr = np.zeros(shape=person_ids.shape)
+    adults = np.zeros(shape=person_ids.shape)
+    id_to_drop = []
+    #interploated = None
+    for id in prev_person_dict:
+        if id not in person_ids and len(prev_person_dict[id]) == 5:
+            num = sum([val for _, _, _, val in prev_person_dict[id]])
+            if num > 0:  # need interpolation
+                prev_pts = []
+                prev_boxes = []
+                prev_adults = []
+                for box, pt, adult_val, _ in prev_person_dict[id]:
+                    prev_boxes.append(box)
+                    prev_pts.append(pt)
+                    prev_adults.append(adult_val)
+                adults_arr = np.array(prev_adults)
+                new_adult = 1 if sum(adults_arr) > max_len / 2 else 0
+                pts_arr = np.array(prev_pts)
+                boxes_arr = np.array(prev_boxes)
+                if avg_prev_frames:
+                    # avg the prev detection
+                    new_pt = np.mean(pts_arr, axis=0)
+                else:
+                    pts_last_arr = pts_arr[1:]
+                    pts_prev_arr = pts_arr[0:max_len-1]
+                    speed = np.mean(pts_last_arr - pts_prev_arr, axis=0)
+                    speed[:, 2] = 0
+                    new_pt = pts_arr[-1, :] + speed / 10.0
+                new_box = np.mean(boxes_arr, axis=0).astype(np.int32)
+
+                prev_person_dict[id].append((new_box, new_pt, new_adult, 0))
+                person_ids = np.concatenate((person_ids, [id]))
+                boxes = np.concatenate((boxes, [new_box]))
+                pts = np.concatenate((pts, [new_pt]))
+                adults = np.concatenate((adults, [new_adult]))
+                interploated_arr = np.concatenate((interploated_arr, [1]))
+            if num == 0:  # drop this temporal prediction
+                id_to_drop.append(id)
+    for id in id_to_drop:
+        del prev_person_dict[id]
+    return prev_person_dict, person_ids, boxes, pts, adults, interploated_arr
+
 
 def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set, image_resolution, single_person,
          disable_tracking, max_batch_size, disable_vidgear, save_video, video_format,
@@ -89,16 +169,18 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
         device=device
     )
 
-    videos = dfs_searcher('/home/shiyong/Cortica/Research/Juno/Videos')
+    videos = dfs_searcher('/home/shiyong/Cortica/Research/Juno/debug/normal_video_5')
     out_names = ["_".join(fn.split(os.path.sep)[1:]) for fn in videos]
     print(len(out_names))
     has_display = False
-    save_video = False
+    save_video = True
     video_height = 1440
-    out_video_folder = '/home/shiyong/Cortica/Research/Juno/Videos/all_out_no_pose_resize_800'
+    out_video_folder = '/home/shiyong/Cortica/Research/Juno/debug/normal_video_5_output'
     os.makedirs(out_video_folder, exist_ok=True)
+    if save_video:
+        out_frame_folder = os.path.join(out_video_folder, 'frames')
+        os.makedirs(out_frame_folder, exist_ok=True)
     for idx, (filename, out_name) in enumerate(zip(videos, out_names)):
-        print(idx)
         data_name = os.path.splitext(os.path.basename(out_name))[0] + '.pkl'
         out_data = []
         if filename is not None:
@@ -118,10 +200,17 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
             prev_pts = None
             prev_person_ids = None
             next_person_id = 0
+            adults = None
+            interpolated = None
+
+        frame_id = 0
+        prev_person_dict = {}
 
         while True:
             t = time.time()
-
+            print(frame_id)
+            if frame_id == 58:
+                aaa = 0
             if filename is not None or disable_vidgear:
                 ret, frame = video.read()
                 if not ret:
@@ -137,7 +226,8 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
 
             if not disable_tracking:
                 boxes, pts = pts
-                #boxes, pts = filter_boxes_pts(boxes, pts, video_height)
+                boxes, pts = filter_boxes_pts(frame_id, boxes, pts, video_height)
+                # boxes, pts, adults = detect_adults(boxes, pts)
 
             if not disable_tracking:
                 if len(pts) > 0:
@@ -147,12 +237,17 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
                     else:
                         boxes, pts, person_ids = find_person_id_associations(
                             boxes=boxes, pts=pts, prev_boxes=prev_boxes, prev_pts=prev_pts, prev_person_ids=prev_person_ids,
-                            next_person_id=next_person_id, pose_alpha=0.0, similarity_threshold=0.4, smoothing_alpha=0.1,
+                            next_person_id=next_person_id, pose_alpha=0.2, similarity_threshold=0.4, smoothing_alpha=0.1,
                         )
                         next_person_id = max(next_person_id, np.max(person_ids) + 1)
                 else:
                     person_ids = np.array((), dtype=np.int32)
 
+                if prev_person_ids is not None:
+                    prev_person_dict, person_ids, boxes, pts, adults, interpolated = interpolate_missing_detection(
+                        prev_person_dict, person_ids, boxes, pts)
+
+                boxes, pts, adults = detect_adults(boxes, pts)
                 prev_boxes = boxes.copy()
                 prev_pts = pts.copy()
                 prev_person_ids = person_ids
@@ -162,19 +257,28 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
 
             out_data.append((pts, person_ids, boxes))
             if save_video:
-                for box in boxes:
+                if interpolated is None:
+                    interpolated = np.zeros(shape=person_ids.shape)
+                for box, id, adult, interp in zip(boxes, person_ids, adults, interpolated):
+                    thick = 4
+                    if interp:
+                        thick = 1
+                    color = (255, 0, 0)
+                    if adult:
+                        color = (0, 0, 255)
                     x1, y1, x2, y2 = box
-                    frame = cv2.line(frame, (x1, y1), (x1, y2), color=(255, 0, 0), thickness=2)
-                    frame = cv2.line(frame, (x1, y2), (x2, y2), color=(255, 0, 0), thickness=2)
-                    frame = cv2.line(frame, (x2, y2), (x2, y1), color=(255, 0, 0), thickness=2)
-                    frame = cv2.line(frame, (x2, y1), (x1, y1), color=(255, 0, 0), thickness=2)
+                    frame = cv2.line(frame, (x1, y1), (x1, y2), color=color, thickness=thick)
+                    frame = cv2.line(frame, (x1, y2), (x2, y2), color=color, thickness=thick)
+                    frame = cv2.line(frame, (x2, y2), (x2, y1), color=color, thickness=thick)
+                    frame = cv2.line(frame, (x2, y1), (x1, y1), color=color, thickness=thick)
+                    cv2.putText(frame, "{}".format(id), (x1+20, y1+50), cv2.FONT_HERSHEY_SIMPLEX, 1, 255, thickness=2)
                 for i, (pt, pid) in enumerate(zip(pts, person_ids)):
                     frame = draw_points_and_skeleton(frame, pt, joints_dict()[hrnet_joints_set]['skeleton'], person_index=pid,
                                                      points_color_palette='gist_rainbow', skeleton_color_palette='jet',
                                                      points_palette_samples=10)
 
             fps = 1. / (time.time() - t)
-            print('\rframerate: %f fps' % fps, end='')
+            print('\rframerate: %f fps' % fps, end='\n')
 
             if has_display:
                 cv2.imshow('frame.png', frame)
@@ -185,8 +289,9 @@ def main(camera_id, filename, hrnet_c, hrnet_j, hrnet_weights, hrnet_joints_set,
                     else:
                         video.stop()
                     break
-            # else:
-            #     cv2.imwrite('frame.png', frame)
+            else:
+                cv2.imwrite(os.path.join(out_frame_folder, 'frame_{}.png'.format(frame_id)), frame)
+            frame_id += 1
 
             if save_video:
                 if video_writer is None:
